@@ -5,10 +5,13 @@ A Scriptable widget for iOS that displays the current US Treasury Bond Yield Cur
 ## Features
 
 - **Real-time Data**: Fetches the latest yield curve data directly from the US Department of Treasury's official XML feed
+- **Smart Caching**: Automatically caches data for 12 hours to minimize API calls and improve performance
 - **Visual Chart**: Displays the yield curve as a clean line chart with data points
 - **Native Drawing**: Uses Scriptable's native DrawContext API for smooth, responsive charts
 - **Dark Theme**: Designed with a modern dark theme that matches iOS aesthetics
 - **Comprehensive Coverage**: Shows yields for all available maturities (1M, 2M, 3M, 4M, 6M, 1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y, 30Y)
+- **Offline Fallback**: Uses cached data even when API is unavailable
+- **Cache Status**: Shows whether data is fresh or cached with age information
 
 ## Installation
 
@@ -45,6 +48,19 @@ This feed provides daily Treasury Par Yield Curve Rates and is updated regularly
 
 ## Widget Features
 
+### Caching System
+- **Automatic Caching**: Data is automatically cached for 12 hours after successful fetch
+- **Cache Status Display**: Widget shows cache age (e.g., "Cached 2.3h ago" or "Fresh data")
+- **Smart Fallback**: Uses expired cache when API is unavailable
+- **Storage Options**: Uses local storage by default (configurable to iCloud storage)
+- **Performance**: Reduces API calls and improves widget loading speed
+
+### Error Handling
+- If data cannot be fetched, the widget displays an error message
+- Graceful handling of missing or invalid data points
+- Fallback display when no data is available
+- Uses expired cached data as fallback when API is unavailable
+
 ## Customization
 
 You can customize the widget by modifying these constants at the top of the script:
@@ -55,6 +71,10 @@ const WIDGET_SIZE = { width: 350, height: 150 };
 
 // Chart padding
 const CHART_PADDING = { top: 25, right: 20, bottom: 35, left: 40 };
+
+// Cache settings
+const CACHE_DURATION_HOURS = 12; // How long to keep cached data
+const USE_ICLOUD_STORAGE = false; // Set to false for local storage
 ```
 
 ### Color Customization
@@ -86,6 +106,7 @@ const CHART_PADDING = { top: 25, right: 20, bottom: 35, left: 40 };
 1. Check your internet connection
 2. Verify the Treasury website is accessible
 3. Try running the script manually in Scriptable to see detailed error messages
+4. Check if cached data is being used as fallback (look for cache status in widget)
 
 ### Widget Appears Blank
 1. Ensure you've selected the correct script in widget settings
@@ -95,7 +116,13 @@ const CHART_PADDING = { top: 25, right: 20, bottom: 35, left: 40 };
 ### Old Data Showing
 1. The Treasury data is updated once per business day
 2. Weekends and holidays may show the last business day's data
-3. Try refreshing the widget by tapping on it
+3. Check the cache status indicator - may be showing cached data
+4. To force fresh data, you can clear the cache (see debugging section below)
+
+### Cache-Related Issues
+1. **Clear Cache**: Run `await clearCache()` in the Scriptable console
+2. **Check Cache Status**: Run `await getCacheInfo()` to see cache details
+3. **Change Storage**: Modify `USE_ICLOUD_STORAGE` to switch between iCloud and local storage
 
 ## License
 

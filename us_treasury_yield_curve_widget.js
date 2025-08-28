@@ -14,9 +14,83 @@ const CHART_SIZE = {
 // Get current year for API call
 const currentYear = new Date().getFullYear();
 
+// Cache configuration
+const CACHE_DURATION_HOURS = 12; // Cache data for 12 hours
+const CACHE_FILE_NAME = "treasury_yield_cache.json";
+const USE_ICLOUD_STORAGE = false; // Set to false to use local storage instead
+
+// Cache management functions
+function getFileManager() {
+  return USE_ICLOUD_STORAGE ? FileManager.iCloud() : FileManager.local();
+}
+
+function getCacheFilePath() {
+  const fm = getFileManager();
+  return fm.joinPath(fm.documentsDirectory(), CACHE_FILE_NAME);
+}
+
+async function getCachedData() {
+  try {
+    const fm = getFileManager();
+    const cachePath = getCacheFilePath();
+    
+    if (!fm.fileExists(cachePath)) {
+      return null;
+    }
+    
+    const cacheString = fm.readString(cachePath);
+    const cacheData = JSON.parse(cacheString);
+    
+    // Check if cache is still valid
+    const cacheAge = Date.now() - cacheData.timestamp;
+    const cacheAgeHours = cacheAge / (1000 * 60 * 60);
+    
+    if (cacheAgeHours < CACHE_DURATION_HOURS) {
+      console.log(`Using cached data (${cacheAgeHours.toFixed(1)} hours old)`);
+      // Add cache metadata to the result
+      const result = { ...cacheData.data };
+      result.cacheStatus = `Cached ${cacheAgeHours.toFixed(1)}h ago`;
+      result.fromCache = true;
+      return result;
+    } else {
+      console.log(`Cache expired (${cacheAgeHours.toFixed(1)} hours old), will fetch new data`);
+      return null;
+    }
+  } catch (error) {
+    console.error("Error reading cache:", error);
+    return null;
+  }
+}
+
+async function setCachedData(data) {
+  try {
+    const fm = getFileManager();
+    const cachePath = getCacheFilePath();
+    
+    const cacheObject = {
+      timestamp: Date.now(),
+      data: data
+    };
+    
+    const cacheString = JSON.stringify(cacheObject);
+    fm.writeString(cachePath, cacheString);
+    console.log("Data cached successfully");
+  } catch (error) {
+    console.error("Error writing cache:", error);
+  }
+}
+
 // Fetch Treasury yield curve data
 async function fetchYieldData() {
+  // First try to get cached data
+  const cachedData = await getCachedData();
+  if (cachedData) {
+    return cachedData;
+  }
+  
+  // If no valid cache, fetch from API
   try {
+    console.log("Fetching fresh data from Treasury API...");
     const url = `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value=${currentYear}`;
     const req = new Request(url);
     const xmlString = await req.loadString();
@@ -67,15 +141,105 @@ async function fetchYieldData() {
       }
     }
     
-    return { date, yieldData };
+    const result = { date, yieldData };
+    result.cacheStatus = "Fresh data";
+    result.fromCache = false;
+    
+    // Cache the successful result
+    await setCachedData(result);
+    
+    return result;
   } catch (error) {
     console.error("Error fetching yield data:", error);
+    
+    // If API fails, try to return any cached data even if expired as fallback
+    const expiredCache = await getFallbackCachedData();
+    if (expiredCache) {
+      console.log("Using expired cached data as fallback");
+      return expiredCache;
+    }
+    
     return null;
   }
 }
 
+// Get cached data even if expired (for fallback purposes)
+async function getFallbackCachedData() {
+  try {
+    const fm = getFileManager();
+    const cachePath = getCacheFilePath();
+    
+    if (!fm.fileExists(cachePath)) {
+      return null;
+    }
+    
+    const cacheString = fm.readString(cachePath);
+    const cacheData = JSON.parse(cacheString);
+    
+    const cacheAge = Date.now() - cacheData.timestamp;
+    const cacheAgeHours = cacheAge / (1000 * 60 * 60);
+    
+    console.log("Returning expired cache as fallback");
+    const result = { ...cacheData.data };
+    result.cacheStatus = `Expired cache (${cacheAgeHours.toFixed(1)}h old)`;
+    result.fromCache = true;
+    return result;
+  } catch (error) {
+    console.error("Error reading fallback cache:", error);
+    return null;
+  }
+}
+
+// Clear cache (for debugging/manual refresh)
+async function clearCache() {
+  try {
+    const fm = getFileManager();
+    const cachePath = getCacheFilePath();
+    
+    if (fm.fileExists(cachePath)) {
+      fm.remove(cachePath);
+      console.log("Cache cleared successfully");
+      return true;
+    } else {
+      console.log("No cache file to clear");
+      return false;
+    }
+  } catch (error) {
+    console.error("Error clearing cache:", error);
+    return false;
+  }
+}
+
+// Get cache info (for debugging)
+async function getCacheInfo() {
+  try {
+    const fm = getFileManager();
+    const cachePath = getCacheFilePath();
+    
+    if (!fm.fileExists(cachePath)) {
+      return { exists: false };
+    }
+    
+    const cacheString = fm.readString(cachePath);
+    const cacheData = JSON.parse(cacheString);
+    const cacheAge = Date.now() - cacheData.timestamp;
+    const cacheAgeHours = cacheAge / (1000 * 60 * 60);
+    
+    return {
+      exists: true,
+      ageHours: cacheAgeHours,
+      isValid: cacheAgeHours < CACHE_DURATION_HOURS,
+      timestamp: new Date(cacheData.timestamp).toISOString(),
+      dataDate: cacheData.data.date
+    };
+  } catch (error) {
+    console.error("Error getting cache info:", error);
+    return { exists: false, error: error.message };
+  }
+}
+
 // Create yield curve chart
-function createYieldCurveChart(yieldData, date) {
+function createYieldCurveChart(yieldData, date, cacheStatus = null) {
   const drawContext = new DrawContext();
   drawContext.size = new Size(WIDGET_SIZE.width, WIDGET_SIZE.height);
   drawContext.opaque = false;
@@ -180,12 +344,15 @@ function createYieldCurveChart(yieldData, date) {
   const titleRect = new Rect(10, 5, WIDGET_SIZE.width - 20, 15);
   drawContext.drawTextInRect(titleText, titleRect);
   
-  // Date
+  // Date and cache status
   drawContext.setFont(Font.systemFont(10));
   drawContext.setTextColor(new Color("#999999"));
-  const dateText = `${date}`;
+  let statusText = `${date}`;
+  if (cacheStatus) {
+    statusText += ` • ${cacheStatus}`;
+  }
   const dateRect = new Rect(10, WIDGET_SIZE.height - 15, WIDGET_SIZE.width - 20, 12);
-  drawContext.drawTextInRect(dateText, dateRect);
+  drawContext.drawTextInRect(statusText, dateRect);
   
   // Y-axis labels (yield percentages)
   drawContext.setFont(Font.systemFont(8));
@@ -217,7 +384,7 @@ async function createWidget() {
   
   if (data && data.yieldData && data.yieldData.length > 0) {
     // Create and add chart image
-    const chartImage = createYieldCurveChart(data.yieldData, data.date);
+    const chartImage = createYieldCurveChart(data.yieldData, data.date, data.cacheStatus);
     const imageWidget = widget.addImage(chartImage);
     imageWidget.centerAlignImage();
   } else {
